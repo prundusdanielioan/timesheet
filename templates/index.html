@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timesheet Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="app-container">
+        <header class="top-nav">
+            <h1>Timesheet Dashboard</h1>
+            <div class="nav-actions">
+                <!-- Month Selector -->
+                <div class="month-selector">
+                    <a href="/?month={{ prev_month }}" class="btn btn-sm btn-secondary">◀</a>
+                    <span class="current-month-label">{{ current_month }}</span>
+                    <a href="/?month={{ next_month }}" class="btn btn-sm btn-secondary">▶</a>
+                </div>
+                <a href="/export?month={{ selected_month }}" class="btn btn-secondary">Export Month</a>
+            </div>
+        </header>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-messages">
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <!-- Monthly Summary Banner -->
+        <div class="month-banner">
+            <div class="month-banner-title">{{ current_month }}</div>
+            <div class="summary-stats">
+                <div class="stat">
+                    <span class="stat-value stat-days">{{ days_logged }}</span>
+                    <span class="stat-label">Days</span>
+                </div>
+                <div class="stat-divider"></div>
+                <div class="stat">
+                    <span class="stat-value stat-hours">{{ total_hours|int }}</span>
+                    <span class="stat-label">Hours</span>
+                </div>
+                <div class="stat-divider"></div>
+                <div class="stat">
+                    <span class="stat-value stat-total">{{ '{:,.2f}'.format(total_payment) }} EUR</span>
+                    <span class="stat-label">Total</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <!-- Left Panel: Log New Day -->
+            <div class="panel glass-panel">
+                <h2>Log Today's Work</h2>
+                <form action="/log" method="POST" class="log-form">
+                    <div class="form-group">
+                        <label for="date">Date</label>
+                        <input type="date" id="date" name="date" value="{{ today }}" required>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group flex-1">
+                            <label for="hours">Hours</label>
+                            <input type="number" id="hours" name="hours" step="0.5" value="8.0" required>
+                        </div>
+                        <div class="form-group flex-1">
+                            <label for="payment">Payment (EUR)</label>
+                            <input type="number" id="payment" name="payment" value="{{ (hourly_rate * 8)|round(2) }}" required>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <div class="label-with-action">
+                            <label for="tasks_summary">Tasks / Epics Worked On</label>
+                            <button type="button" id="auto-fetch-btn" class="btn btn-sm btn-accent">✨ Auto-Fetch from Azure DevOps</button>
+                        </div>
+                        <textarea id="tasks_summary" name="tasks_summary" rows="4" placeholder="Click 'Auto-Fetch' to grab your active Azure Devops tasks, or type manually..."></textarea>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100">Save Timesheet Log</button>
+                </form>
+            </div>
+
+            <!-- Right Panel: History -->
+            <div class="panel history-panel">
+                <h2>Logs — {{ current_month }}</h2>
+
+                {% if logs %}
+                    <div class="logs-list">
+                        {% for log in logs %}
+                        <div class="log-card">
+                            <div class="log-header">
+                                <span class="log-date">{{ log.date }}</span>
+                                <span class="log-meta">{{ log.hours }} hrs • {{ log.payment }} EUR</span>
+                            </div>
+                            <div class="log-tasks">
+                                {{ log.tasks_summary }}
+                            </div>
+                            <div class="log-actions" style="margin-top: 0.75rem; text-align: right;">
+                                <button type="button" class="btn btn-sm btn-secondary" onclick="editLog('{{ log.date }}', {{ log.hours }}, `{{ log.tasks_summary | replace('`', '\\\\`') }}`)">✏️ Edit</button>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="empty-state">
+                        <p>No logs for {{ current_month }}.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Calendar below, full width -->
+        <div class="panel glass-panel calendar-panel" style="margin-top: 2rem;">
+            <div class="calendar-header">
+                <h2>📅 {{ current_month }}</h2>
+                <span class="working-days-badge">{{ working_days }} zile lucrătoare</span>
+            </div>
+            <table class="calendar-table">
+                <thead>
+                    <tr>
+                        <th>L</th><th>M</th><th>M</th><th>J</th><th>V</th><th class="weekend">S</th><th class="weekend">D</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for week in month_days %}
+                    <tr>
+                        {% for day in week %}
+                        {% if day == 0 %}
+                            <td></td>
+                        {% else %}
+                            {% set day_str = '%04d-%02d-%02d' | format(cal_year, cal_month, day) %}
+                            {% set is_holiday = day_str in holidays %}
+                            {% set is_logged = day_str in logged_dates %}
+                            {% set is_today = day_str == today %}
+                            {% set is_weekend = loop.index >= 6 %}
+                            <td class="cal-day{% if is_holiday %} holiday{% endif %}{% if is_logged %} logged{% endif %}{% if is_today %} today{% endif %}{% if is_weekend %} weekend{% endif %}"
+                                {% if is_holiday %}title="{{ holidays[day_str] }}"{% endif %}>
+                                {{ day }}
+                                {% if is_holiday %}<span class="holiday-dot"></span>{% endif %}
+                                {% if is_logged %}<span class="logged-dot"></span>{% endif %}
+                            </td>
+                        {% endif %}
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <div class="calendar-legend">
+                <span><span class="legend-dot holiday-dot"></span> Zi libera</span>
+                <span><span class="legend-dot logged-dot"></span> Logged</span>
+                <span><span class="legend-dot today-dot"></span> Azi</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const hoursInput = document.getElementById('hours');
+        const paymentInput = document.getElementById('payment');
+        const hourlyRate = {{ hourly_rate }};
+
+        hoursInput.addEventListener('input', () => {
+            const hrs = parseFloat(hoursInput.value) || 0;
+            paymentInput.value = (hrs * hourlyRate).toFixed(2);
+        });
+
+        function editLog(date, hours, summary) {
+            document.getElementById('date').value = date;
+            hoursInput.value = hours;
+            const event = new Event('input');
+            hoursInput.dispatchEvent(event);
+            document.getElementById('tasks_summary').value = summary;
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        document.getElementById('auto-fetch-btn').addEventListener('click', async () => {
+            const btn = document.getElementById('auto-fetch-btn');
+            const summaryBox = document.getElementById('tasks_summary');
+            
+            btn.innerHTML = '⏳ Fetching...';
+            btn.disabled = true;
+            
+            try {
+                const response = await fetch('/api/azure-tasks');
+                const data = await response.json();
+                
+                if (response.ok) {
+                    const existing = summaryBox.value.trim();
+                    const newTasks = data.tasks;
+                    
+                    if (existing) {
+                        const existingTasks = existing.split(',').map(t => t.trim());
+                        const incomingTasks = newTasks.split(',').map(t => t.trim());
+                        const unique = incomingTasks.filter(t => !existingTasks.includes(t));
+                        
+                        if (unique.length > 0) {
+                            summaryBox.value = existing + ', ' + unique.join(', ');
+                            btn.innerHTML = `✅ Added ${unique.length} new`;
+                        } else {
+                            btn.innerHTML = '✅ Already up to date';
+                        }
+                    } else {
+                        summaryBox.value = newTasks;
+                        btn.innerHTML = '✅ Fetched!';
+                    }
+                } else {
+                    summaryBox.value = 'Error fetching tasks: ' + (data.error || 'Unknown error');
+                    btn.innerHTML = '❌ Failed';
+                }
+            } catch (err) {
+                summaryBox.value = 'Network error fetching tasks.';
+                btn.innerHTML = '❌ Error';
+            }
+            
+            setTimeout(() => {
+                btn.innerHTML = '✨ Auto-Fetch from Azure DevOps';
+                btn.disabled = false;
+            }, 3000);
+        });
+    </script>
+</body>
+</html>
