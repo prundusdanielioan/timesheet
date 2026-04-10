@@ -166,13 +166,22 @@ def log_day():
 @app.route('/export')
 def export_pdf():
     consultant_name = os.getenv("CONSULTANT_NAME", "Consultant")
-    current_month = datetime.now().strftime('%Y-%m')
-    month_label = datetime.now().strftime('%B %Y')
+    company_name = os.getenv("COMPANY_NAME", "Company")
+    
+    # Support month selection via query param
+    selected_month = request.args.get('month', datetime.now().strftime('%Y-%m'))
+    try:
+        sel_year, sel_mon = int(selected_month[:4]), int(selected_month[5:7])
+    except (ValueError, IndexError):
+        sel_year, sel_mon = datetime.now().year, datetime.now().month
+        selected_month = f"{sel_year}-{sel_mon:02d}"
+    
+    month_label = date(sel_year, sel_mon, 1).strftime('%B %Y')
     
     conn = get_db_connection()
     logs = conn.execute(
         'SELECT * FROM logs WHERE date LIKE ? ORDER BY date ASC',
-        (current_month + '%',)
+        (selected_month + '%',)
     ).fetchall()
     conn.close()
     
@@ -190,14 +199,21 @@ def export_pdf():
     pdf.cell(0, 8, f"Consultant: {consultant_name}", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(6)
     
+    # Column widths
+    col_date = 25
+    col_hours = 15
+    col_eur = 25
+    col_tasks = 125
+    line_height = 6
+    
     # Table Header
     pdf.set_fill_color(59, 130, 246)
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(25, 10, "Date", border=1, fill=True, align="C")
-    pdf.cell(15, 10, "Hours", border=1, fill=True, align="C")
-    pdf.cell(25, 10, "EUR", border=1, fill=True, align="C")
-    pdf.cell(125, 10, "Tasks", border=1, fill=True, align="C")
+    pdf.cell(col_date, 10, "Date", border=1, fill=True, align="C")
+    pdf.cell(col_hours, 10, "Hours", border=1, fill=True, align="C")
+    pdf.cell(col_eur, 10, "EUR", border=1, fill=True, align="C")
+    pdf.cell(col_tasks, 10, "Tasks", border=1, fill=True, align="C")
     pdf.ln()
     
     # Table Rows
@@ -209,36 +225,35 @@ def export_pdf():
     fill = False
     
     for log in logs:
+        total_hours += log['hours']
+        total_payment += log['payment']
+        
+        # Split tasks by comma, each on its own line
+        tasks_text = log['tasks_summary'] or ''
+        tasks_lines = [t.strip() for t in tasks_text.replace(', ', ',').split(',') if t.strip()]
+        tasks_multiline = '\n'.join(tasks_lines) if tasks_lines else ''
+        num_lines = max(len(tasks_lines), 1)
+        row_height = num_lines * line_height
+        
         if fill:
             pdf.set_fill_color(240, 240, 250)
         else:
             pdf.set_fill_color(255, 255, 255)
         
-        total_hours += log['hours']
-        total_payment += log['payment']
+        # Remember Y position before drawing
+        y_before = pdf.get_y()
+        x_start = pdf.l_margin
         
-        # Split tasks by comma, put each on its own line
-        tasks_text = log['tasks_summary'] or ''
-        tasks_lines = tasks_text.replace(', ', ',').split(',')
-        tasks_multiline = '\n'.join([t.strip() for t in tasks_lines if t.strip()])
+        # Draw fixed cells
+        pdf.cell(col_date, row_height, log['date'], border=1, fill=True, align="C")
+        pdf.cell(col_hours, row_height, str(log['hours']), border=1, fill=True, align="C")
+        pdf.cell(col_eur, row_height, f"{log['payment']:.2f}", border=1, fill=True, align="C")
         
-        # Calculate how tall the tasks cell needs to be
-        line_height = 6
-        num_lines = max(len(tasks_lines), 1)
-        row_height = num_lines * line_height
+        # Draw tasks multi_cell (this moves cursor to next line automatically)
+        pdf.multi_cell(col_tasks, line_height, tasks_multiline, border=1, fill=True)
         
-        # Save position for the fixed-width cells
-        x_start = pdf.get_x()
-        y_start = pdf.get_y()
-        
-        # Draw the fixed cells with calculated height
-        pdf.cell(25, row_height, log['date'], border=1, fill=True, align="C")
-        pdf.cell(15, row_height, str(log['hours']), border=1, fill=True, align="C")
-        pdf.cell(25, row_height, f"{log['payment']:.2f}", border=1, fill=True, align="C")
-        
-        # Draw the tasks multi_cell
-        x_tasks = pdf.get_x()
-        pdf.multi_cell(125, line_height, tasks_multiline, border=1, fill=True)
+        # Ensure cursor is at the correct Y after the row
+        pdf.set_y(y_before + row_height)
         
         fill = not fill
     
@@ -247,16 +262,17 @@ def export_pdf():
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_fill_color(30, 41, 59)
     pdf.set_text_color(255, 255, 255)
-    pdf.cell(25, 10, "TOTAL", border=1, fill=True, align="C")
-    pdf.cell(15, 10, str(total_hours), border=1, fill=True, align="C")
-    pdf.cell(25, 10, f"{total_payment:.2f}", border=1, fill=True, align="C")
-    pdf.cell(125, 10, "", border=1, fill=True)
+    pdf.cell(col_date, 10, "TOTAL", border=1, fill=True, align="C")
+    pdf.cell(col_hours, 10, str(total_hours), border=1, fill=True, align="C")
+    pdf.cell(col_eur, 10, f"{total_payment:.2f}", border=1, fill=True, align="C")
+    pdf.cell(col_tasks, 10, "", border=1, fill=True)
     
-    # Output PDF via BytesIO for Python 3.14 compatibility 
+    # Output PDF
     from flask import send_file
     buffer = io.BytesIO(bytes(pdf.output()))
     buffer.seek(0)
-    return send_file(buffer, mimetype='application/pdf', as_attachment=True, download_name=f'timesheet_{current_month}.pdf')
+    filename = f"Timesheet {company_name} {month_label}.pdf"
+    return send_file(buffer, mimetype='application/pdf', as_attachment=True, download_name=filename)
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
