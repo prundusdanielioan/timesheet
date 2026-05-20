@@ -119,7 +119,24 @@
         <div class="panel glass-panel calendar-panel" style="margin-top: 2rem;">
             <div class="calendar-header">
                 <h2>📅 {{ current_month }}</h2>
-                <span class="working-days-badge">{{ working_days }} zile lucrătoare</span>
+                <div class="calendar-header-meta">
+                    <span class="working-days-badge">{{ working_days }} zile lucrătoare</span>
+                    <span class="estimated-money-badge">Estimate: {{ '{:,.2f}'.format(estimated_payment) }} EUR</span>
+                </div>
+            </div>
+
+            <!-- Progress Bar based on money earned vs estimated -->
+            <div class="progress-bar-container">
+                <div class="progress-bar-info">
+                    <span class="progress-bar-label">Money earned:</span>
+                    <span class="progress-bar-values">
+                        <strong>{{ '{:,.2f}'.format(total_payment) }} EUR</strong> / {{ '{:,.2f}'.format(estimated_payment) }} EUR
+                    </span>
+                    <span class="progress-bar-percent">{{ '{:.1f}'.format(progress_percent) }}%</span>
+                </div>
+                <div class="progress-bar-track" title="{{ '{:.1f}'.format(progress_percent) }}% of monthly estimate earned">
+                    <div class="progress-bar-fill" style="width: {{ progress_percent_clamped }}%;"></div>
+                </div>
             </div>
             <table class="calendar-table">
                 <thead>

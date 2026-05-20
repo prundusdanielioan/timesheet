@@ -79,6 +79,12 @@ def index():
     # Human-readable month label
     month_label = date(sel_year, sel_mon, 1).strftime('%B %Y')
     
+    daily_amount = float(os.getenv("DAILY_AMOUNT", hourly_rate * 8))
+    estimated_payment = working_days * daily_amount
+    total_payment = month_totals['total_payment']
+    progress_percent = (total_payment / estimated_payment * 100) if estimated_payment > 0 else 0.0
+    progress_percent_clamped = min(progress_percent, 100.0)
+    
     return render_template('index.html', logs=logs, today=today_str, hourly_rate=hourly_rate,
                            total_hours=month_totals['total_hours'],
                            total_payment=month_totals['total_payment'],
@@ -92,7 +98,10 @@ def index():
                            month_days=month_days,
                            cal_year=sel_year,
                            cal_month=sel_mon,
-                           working_days=working_days)
+                           working_days=working_days,
+                           estimated_payment=estimated_payment,
+                           progress_percent=progress_percent,
+                           progress_percent_clamped=progress_percent_clamped)
 
 @app.route('/api/azure-tasks')
 def fetch_azure_tasks():

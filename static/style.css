@@ -473,3 +473,69 @@ td .logged-dot {
     margin-right: 4px;
     vertical-align: middle;
 }
+
+.calendar-header-meta {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.estimated-money-badge {
+    background: rgba(52, 211, 153, 0.15);
+    border: 1px solid rgba(52, 211, 153, 0.3);
+    color: #34d399;
+    padding: 0.4rem 1rem;
+    border-radius: 20px;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.progress-bar-container {
+    margin: 1.5rem 0 2rem 0;
+    padding: 1.25rem;
+    background: rgba(15, 23, 42, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+}
+
+.progress-bar-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+    font-size: 0.9rem;
+}
+
+.progress-bar-label {
+    color: var(--text-secondary);
+}
+
+.progress-bar-values {
+    color: var(--text-primary);
+}
+
+.progress-bar-values strong {
+    color: #34d399;
+}
+
+.progress-bar-percent {
+    font-weight: 700;
+    color: var(--accent-color);
+}
+
+.progress-bar-track {
+    width: 100%;
+    height: 12px;
+    background: rgba(15, 23, 42, 0.6);
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--panel-border);
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-color) 0%, #34d399 100%);
+    border-radius: 6px;
+    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+}
