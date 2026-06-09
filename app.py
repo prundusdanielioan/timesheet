@@ -6,6 +6,8 @@ from datetime import datetime, date
 from flask import Flask, render_template, request, jsonify, redirect, flash, make_response, send_file
 from dotenv import load_dotenv
 from fpdf import FPDF
+from fpdf.fonts import FontFace
+import re
 from holidays_ro import get_holidays_for_month
 
 import sys
@@ -215,66 +217,70 @@ def export_pdf():
     col_tasks = 125
     line_height = 6
     
-    # Table Header
-    pdf.set_fill_color(59, 130, 246)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(col_date, 10, "Date", border=1, fill=True, align="C")
-    pdf.cell(col_hours, 10, "Hours", border=1, fill=True, align="C")
-    pdf.cell(col_eur, 10, "EUR", border=1, fill=True, align="C")
-    pdf.cell(col_tasks, 10, "Tasks", border=1, fill=True, align="C")
-    pdf.ln()
-    
-    # Table Rows
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font("Helvetica", "", 9)
+    # Styles
+    headings_style = FontFace(
+        family="Helvetica",
+        emphasis="B",
+        size_pt=10,
+        color=(255, 255, 255),
+        fill_color=(59, 130, 246)
+    )
     
     total_hours = 0.0
     total_payment = 0.0
-    fill = False
     
-    for log in logs:
-        total_hours += log['hours']
-        total_payment += log['payment']
+    # Create the table using FPDF table API
+    with pdf.table(
+        col_widths=(col_date, col_hours, col_eur, col_tasks),
+        headings_style=headings_style,
+        line_height=line_height,
+        text_align="CENTER",
+        v_align="MIDDLE"
+    ) as table:
+        # Header Row
+        row = table.row()
+        row.cell("Date")
+        row.cell("Hours")
+        row.cell("EUR")
+        row.cell("Tasks")
         
-        # Split tasks by comma, each on its own line
-        tasks_text = log['tasks_summary'] or ''
-        tasks_lines = [t.strip() for t in tasks_text.replace(', ', ',').split(',') if t.strip()]
-        tasks_multiline = '\n'.join(tasks_lines) if tasks_lines else ''
-        num_lines = max(len(tasks_lines), 1)
-        row_height = num_lines * line_height
+        fill = False
+        pattern = re.compile(r';|\r?\n|,(?=\s*(?:Epic|Bug|Issue|Pull Request|PR|Task)\b)', re.IGNORECASE)
         
-        if fill:
-            pdf.set_fill_color(240, 240, 250)
-        else:
-            pdf.set_fill_color(255, 255, 255)
-        
-        # Remember Y position before drawing
-        y_before = pdf.get_y()
-        x_start = pdf.l_margin
-        
-        # Draw fixed cells
-        pdf.cell(col_date, row_height, log['date'], border=1, fill=True, align="C")
-        pdf.cell(col_hours, row_height, str(log['hours']), border=1, fill=True, align="C")
-        pdf.cell(col_eur, row_height, f"{log['payment']:.2f}", border=1, fill=True, align="C")
-        
-        # Draw tasks multi_cell (this moves cursor to next line automatically)
-        pdf.multi_cell(col_tasks, line_height, tasks_multiline, border=1, fill=True)
-        
-        # Ensure cursor is at the correct Y after the row
-        pdf.set_y(y_before + row_height)
-        
-        fill = not fill
-    
-    # Totals Row
-    pdf.set_x(pdf.l_margin)
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.set_fill_color(30, 41, 59)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(col_date, 10, "TOTAL", border=1, fill=True, align="C")
-    pdf.cell(col_hours, 10, str(total_hours), border=1, fill=True, align="C")
-    pdf.cell(col_eur, 10, f"{total_payment:.2f}", border=1, fill=True, align="C")
-    pdf.cell(col_tasks, 10, "", border=1, fill=True)
+        for log in logs:
+            total_hours += log['hours']
+            total_payment += log['payment']
+            
+            # Split tasks by semicolon, newline, or comma (if followed by task prefix)
+            tasks_text = log['tasks_summary'] or ''
+            raw_tasks = pattern.split(tasks_text)
+            tasks_lines = [t.strip() for t in raw_tasks if t.strip()]
+            tasks_multiline = '\n'.join(tasks_lines) if tasks_lines else ''
+            
+            bg_color = (240, 240, 250) if fill else (255, 255, 255)
+            row_style = FontFace(family="Helvetica", size_pt=9, fill_color=bg_color)
+            
+            row = table.row()
+            row.cell(log['date'], style=row_style, align="CENTER")
+            row.cell(str(log['hours']), style=row_style, align="CENTER")
+            row.cell(f"{log['payment']:.2f}", style=row_style, align="CENTER")
+            row.cell(tasks_multiline, style=row_style, align="LEFT")
+            
+            fill = not fill
+            
+        # Totals Row
+        total_style = FontFace(
+            family="Helvetica",
+            emphasis="B",
+            size_pt=10,
+            color=(255, 255, 255),
+            fill_color=(30, 41, 59)
+        )
+        row = table.row()
+        row.cell("TOTAL", style=total_style, align="CENTER")
+        row.cell(str(total_hours), style=total_style, align="CENTER")
+        row.cell(f"{total_payment:.2f}", style=total_style, align="CENTER")
+        row.cell("", style=total_style)
     
     # Output PDF
     from flask import send_file
