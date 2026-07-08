@@ -6,9 +6,26 @@ from fpdf import FPDF
 from fpdf.fonts import FontFace
 from db import get_db_connection
 
+def sanitize_pdf_text(text):
+    if not text:
+        return ""
+    # Map of unicode characters to Latin-1/ASCII equivalents
+    replacements = {
+        '\u2014': '-',  # em-dash —
+        '\u2013': '-',  # en-dash –
+        '\u201c': '"',  # curly double open
+        '\u201d': '"',  # curly double close
+        '\u2018': "'",  # curly single open
+        '\u2019': "'",  # curly single close
+        '\u00a0': ' ',  # non-breaking space
+    }
+    for uni_char, ascii_char in replacements.items():
+        text = text.replace(uni_char, ascii_char)
+    return text.encode('latin-1', 'replace').decode('latin-1')
+
 def generate_timesheet_pdf_data(selected_month):
-    consultant_name = os.getenv("CONSULTANT_NAME", "Consultant")
-    company_name = os.getenv("COMPANY_NAME", "Company")
+    consultant_name = sanitize_pdf_text(os.getenv("CONSULTANT_NAME", "Consultant"))
+    company_name = sanitize_pdf_text(os.getenv("COMPANY_NAME", "Company"))
     
     try:
         sel_year, sel_mon = int(selected_month[:4]), int(selected_month[5:7])
@@ -84,7 +101,7 @@ def generate_timesheet_pdf_data(selected_month):
             tasks_text = log['tasks_summary'] or ''
             raw_tasks = pattern.split(tasks_text)
             tasks_lines = [t.strip() for t in raw_tasks if t.strip()]
-            tasks_multiline = '\n'.join(tasks_lines) if tasks_lines else ''
+            tasks_multiline = sanitize_pdf_text('\n'.join(tasks_lines)) if tasks_lines else ''
             
             bg_color = (240, 240, 250) if fill else (255, 255, 255)
             row_style = FontFace(family="Helvetica", size_pt=9, fill_color=bg_color)
