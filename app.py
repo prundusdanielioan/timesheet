@@ -467,9 +467,16 @@ def merge_and_email():
         except Exception as e:
             return jsonify({"error": f"Nu s-a putut salva PDF-ul local pentru a fi atașat: {str(e)}"}), 500
                 
+        # Convert selected_month (e.g. 2026-06) to human-readable month_label (e.g. June 2026)
+        try:
+            sel_year, sel_mon = int(selected_month[:4]), int(selected_month[5:7])
+        except (ValueError, IndexError):
+            sel_year, sel_mon = datetime.now().year, datetime.now().month
+        month_label = date(sel_year, sel_mon, 1).strftime('%B %Y')
+
         # Send Email via Outlook AppleScript
-        subject = f"Timesheet & Invoice - {company_name} - {selected_month}"
-        body = f"Hello,\n\nPlease find attached the timesheet and invoice for the month of {selected_month}.\n\nBest regards,\n{os.getenv('CONSULTANT_NAME', 'Consultant')}"
+        subject = f"Timesheet & Invoice - {company_name} - {month_label}"
+        body = f"Hello,\n\nPlease find attached the timesheet and invoice for the month of {month_label}.\n\nBest regards,\n{os.getenv('CONSULTANT_NAME', 'Consultant')}"
         
         send_via_local_outlook(
             recipient_emails=recipient_emails,
