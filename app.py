@@ -1,13 +1,9 @@
 import os
-import sqlite3
 import io
 import calendar
 from datetime import datetime, date
 from flask import Flask, render_template, request, jsonify, redirect, flash, make_response, send_file
 from dotenv import load_dotenv
-from fpdf import FPDF
-from fpdf.fonts import FontFace
-import re
 from holidays_ro import get_holidays_for_month
 
 import sys
@@ -20,52 +16,13 @@ except ImportError:
 
 load_dotenv()
 
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
+# Import split service modules
+from db import get_db_connection
+from pdf_service import generate_timesheet_pdf_data
+from outlook_service import send_via_local_outlook
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_dev_key' # for flash messages
-
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'timesheet.db')
-
-def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-import subprocess
-
-def send_via_local_outlook(recipient_emails, subject, body, file_path):
-    escaped_subject = subject.replace('\\', '\\\\').replace('"', '\\"')
-    escaped_body = body.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\r')
-    
-    emails = [e.strip() for e in recipient_emails.split(",") if e.strip()]
-    recipients_applescript = ""
-    for email in emails:
-        recipients_applescript += f'make new recipient at newMail with properties {{email address:{{address:"{email}"}}}}\n'
-        
-    applescript = f'''
-    tell application "Microsoft Outlook"
-        set newMail to make new outgoing message with properties {{subject:"{escaped_subject}"}}
-        set content of newMail to "{escaped_body}"
-        {recipients_applescript}
-        make new attachment at newMail with properties {{file:POSIX file "{file_path}"}}
-        send newMail
-    end tell
-    '''
-    
-    process = subprocess.Popen(
-        ['osascript', '-e', applescript],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    stdout, stderr = process.communicate()
-    
-    if process.returncode != 0:
-        raise Exception(stderr.decode('utf-8'))
 
 
 
@@ -214,113 +171,7 @@ def log_day():
         
     return redirect('/')
 
-def generate_timesheet_pdf_data(selected_month):
-    consultant_name = os.getenv("CONSULTANT_NAME", "Consultant")
-    company_name = os.getenv("COMPANY_NAME", "Company")
-    
-    try:
-        sel_year, sel_mon = int(selected_month[:4]), int(selected_month[5:7])
-    except (ValueError, IndexError):
-        sel_year, sel_mon = datetime.now().year, datetime.now().month
-        selected_month = f"{sel_year}-{sel_mon:02d}"
-    
-    month_label = date(sel_year, sel_mon, 1).strftime('%B %Y')
-    
-    conn = get_db_connection()
-    logs = conn.execute(
-        'SELECT * FROM logs WHERE date LIKE ? ORDER BY date ASC',
-        (selected_month + '%',)
-    ).fetchall()
-    conn.close()
-    
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    
-    # Title
-    pdf.set_font("Helvetica", "B", 18)
-    pdf.cell(0, 12, f"Timesheet - {month_label}", new_x="LMARGIN", new_y="NEXT", align="C")
-    pdf.ln(4)
-    
-    # Consultant name
-    pdf.set_font("Helvetica", "", 11)
-    pdf.cell(0, 8, f"Consultant: {consultant_name}", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(6)
-    
-    # Column widths
-    col_date = 25
-    col_hours = 15
-    col_eur = 25
-    col_tasks = 125
-    line_height = 6
-    
-    # Styles
-    headings_style = FontFace(
-        family="Helvetica",
-        emphasis="B",
-        size_pt=10,
-        color=(255, 255, 255),
-        fill_color=(59, 130, 246)
-    )
-    
-    total_hours = 0.0
-    total_payment = 0.0
-    
-    # Create the table using FPDF table API
-    with pdf.table(
-        col_widths=(col_date, col_hours, col_eur, col_tasks),
-        headings_style=headings_style,
-        line_height=line_height,
-        text_align="CENTER",
-        v_align="MIDDLE"
-    ) as table:
-        # Header Row
-        row = table.row()
-        row.cell("Date")
-        row.cell("Hours")
-        row.cell("EUR")
-        row.cell("Tasks")
-        
-        fill = False
-        pattern = re.compile(r';|\r?\n|,(?=\s*(?:Epic|Bug|Issue|Pull Request|PR|Task)\b)', re.IGNORECASE)
-        
-        for log in logs:
-            total_hours += log['hours']
-            total_payment += log['payment']
-            
-            # Split tasks by semicolon, newline, or comma (if followed by task prefix)
-            tasks_text = log['tasks_summary'] or ''
-            raw_tasks = pattern.split(tasks_text)
-            tasks_lines = [t.strip() for t in raw_tasks if t.strip()]
-            tasks_multiline = '\n'.join(tasks_lines) if tasks_lines else ''
-            
-            bg_color = (240, 240, 250) if fill else (255, 255, 255)
-            row_style = FontFace(family="Helvetica", size_pt=9, fill_color=bg_color)
-            
-            row = table.row()
-            row.cell(log['date'], style=row_style, align="CENTER")
-            row.cell(str(log['hours']), style=row_style, align="CENTER")
-            row.cell(f"{log['payment']:.2f}", style=row_style, align="CENTER")
-            row.cell(tasks_multiline, style=row_style, align="LEFT")
-            
-            fill = not fill
-            
-        # Totals Row
-        total_style = FontFace(
-            family="Helvetica",
-            emphasis="B",
-            size_pt=10,
-            color=(255, 255, 255),
-            fill_color=(30, 41, 59)
-        )
-        row = table.row()
-        row.cell("TOTAL", style=total_style, align="CENTER")
-        row.cell(str(total_hours), style=total_style, align="CENTER")
-        row.cell(f"{total_payment:.2f}", style=total_style, align="CENTER")
-        row.cell("", style=total_style)
-        
-    filename = f"Timesheet {company_name} {month_label}.pdf"
-    return bytes(pdf.output()), filename
+
 
 @app.route('/export')
 def export_pdf():
