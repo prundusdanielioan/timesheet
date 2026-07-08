@@ -127,11 +127,21 @@
                             </label>
                         </div>
 
+                        <!-- Recipient emails for sending via email -->
+                        <div class="form-group" style="margin-top: 1rem;">
+                            <label for="recipient_emails">Recipient Emails (destinatari, separați prin virgulă)</label>
+                            <input type="text" id="recipient_emails" name="recipient_emails" placeholder="exemplu1@gmail.com, exemplu2@gmail.com" value="{{ default_recipients }}">
+                        </div>
+
                         <div id="merge-error" class="alert alert-error" style="display: none; padding: 0.75rem; margin-bottom: 1rem; font-size: 0.9rem;"></div>
                         <div id="merge-success-msg" class="alert alert-success" style="display: none; padding: 0.75rem; margin-bottom: 1rem; font-size: 0.9rem;"></div>
 
                         <button type="submit" id="merge-submit-btn" class="btn btn-primary w-100" style="margin-top: 1rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
                             <span>🔀 Merge & Download PDF</span>
+                        </button>
+
+                        <button type="button" id="merge-email-btn" class="btn btn-secondary w-100" style="margin-top: 0.75rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+                            <span>✉️ Merge & Send Email</span>
                         </button>
                     </form>
                 </div>
@@ -482,6 +492,62 @@
             } finally {
                 mergeSubmitBtn.disabled = false;
                 mergeSubmitBtn.innerHTML = originalBtnHtml;
+            }
+        });
+
+        // Handle merge and email button click
+        const mergeEmailBtn = document.getElementById('merge-email-btn');
+        mergeEmailBtn?.addEventListener('click', async (e) => {
+            e.preventDefault();
+            
+            mergeError.style.display = 'none';
+            mergeSuccess.style.display = 'none';
+            
+            const prependTimesheet = document.getElementById('prepend_timesheet').checked;
+            const recipientEmails = document.getElementById('recipient_emails').value.trim();
+            
+            if (!recipientEmails) {
+                showMergeError("Vă rugăm să introduceți cel puțin o adresă de email destinatară.");
+                return;
+            }
+            
+            if (!prependTimesheet && selectedFiles.length === 0) {
+                showMergeError("Vă rugăm selectați cel puțin un fișier PDF sau bifați adăugarea timesheet-ului.");
+                return;
+            }
+            
+            // Set loading state
+            const originalBtnHtml = mergeEmailBtn.innerHTML;
+            mergeEmailBtn.disabled = true;
+            mergeEmailBtn.innerHTML = '⏳ Trimitere email... Vă rugăm așteptați...';
+            
+            const formData = new FormData();
+            formData.append('prepend_timesheet', prependTimesheet);
+            formData.append('selected_month', mergeForm.querySelector('input[name="selected_month"]').value);
+            formData.append('recipient_emails', recipientEmails);
+            
+            selectedFiles.forEach(file => {
+                formData.append('pdf_files', file);
+            });
+            
+            try {
+                const response = await fetch('/merge-and-email', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showGlobalAlert(data.message, 'success');
+                } else {
+                    showMergeError(data.error || "A apărut o eroare la trimiterea email-ului.");
+                }
+            } catch (err) {
+                showMergeError("Network error. Failed to reach the server.");
+            } finally {
+                mergeEmailBtn.disabled = false;
+                mergeEmailBtn.innerHTML = originalBtnHtml;
             }
         });
 

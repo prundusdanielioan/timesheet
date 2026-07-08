@@ -20,6 +20,12 @@ except ImportError:
 
 load_dotenv()
 
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+
 app = Flask(__name__)
 app.secret_key = 'super_secret_dev_key' # for flash messages
 
@@ -29,6 +35,39 @@ def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+import subprocess
+
+def send_via_local_outlook(recipient_emails, subject, body, file_path):
+    escaped_subject = subject.replace('\\', '\\\\').replace('"', '\\"')
+    escaped_body = body.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\r')
+    
+    emails = [e.strip() for e in recipient_emails.split(",") if e.strip()]
+    recipients_applescript = ""
+    for email in emails:
+        recipients_applescript += f'make new recipient at newMail with properties {{email address:{{address:"{email}"}}}}\n'
+        
+    applescript = f'''
+    tell application "Microsoft Outlook"
+        set newMail to make new outgoing message with properties {{subject:"{escaped_subject}"}}
+        set content of newMail to "{escaped_body}"
+        {recipients_applescript}
+        make new attachment at newMail with properties {{file:POSIX file "{file_path}"}}
+        send newMail
+    end tell
+    '''
+    
+    process = subprocess.Popen(
+        ['osascript', '-e', applescript],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    stdout, stderr = process.communicate()
+    
+    if process.returncode != 0:
+        raise Exception(stderr.decode('utf-8'))
+
+
 
 @app.route('/')
 def index():
@@ -103,7 +142,8 @@ def index():
                            working_days=working_days,
                            estimated_payment=estimated_payment,
                            progress_percent=progress_percent,
-                           progress_percent_clamped=progress_percent_clamped)
+                           progress_percent_clamped=progress_percent_clamped,
+                           default_recipients=os.getenv("DEFAULT_RECIPIENT_EMAILS", ""))
 
 @app.route('/api/azure-tasks')
 def fetch_azure_tasks():
@@ -366,5 +406,90 @@ def merge_pdfs():
         return jsonify({"error": f"Failed to merge PDFs: {str(e)}"}), 500
 
 
+@app.route('/merge-and-email', methods=['POST'])
+def merge_and_email():
+    from pypdf import PdfMerger
+    
+    prepend_timesheet = request.form.get('prepend_timesheet') == 'true'
+    selected_month = request.form.get('selected_month', datetime.now().strftime('%Y-%m'))
+    recipient_emails = request.form.get('recipient_emails', '')
+    
+    if not recipient_emails:
+        return jsonify({"error": "Adresele de email destinatare sunt obligatorii."}), 400
+        
+    uploaded_files = request.files.getlist('pdf_files')
+    
+    merger = PdfMerger()
+    
+    try:
+        # 1. Prepend current month timesheet if requested
+        if prepend_timesheet:
+            pdf_bytes, filename = generate_timesheet_pdf_data(selected_month)
+            merger.append(io.BytesIO(pdf_bytes))
+            
+        # 2. Append the rest of the uploaded files
+        has_files = False
+        for file in uploaded_files:
+            if file and file.filename.endswith('.pdf'):
+                merger.append(io.BytesIO(file.read()))
+                has_files = True
+                
+        if not prepend_timesheet and not has_files:
+            return jsonify({"error": "Nu ai încărcat sau selectat niciun PDF pentru îmbinare."}), 400
+            
+        output = io.BytesIO()
+        merger.write(output)
+        merger.close()
+        output.seek(0)
+        
+        company_name = os.getenv("COMPANY_NAME", "Company")
+        download_name = f"Merged_Timesheet_{company_name}_{selected_month}.pdf" if prepend_timesheet else "Merged_Documents.pdf"
+        
+        pdf_bytes = output.getvalue()
+        
+        # Save to local folder (required by Outlook as a physical file attachment)
+        local_dir = os.getenv("LOCAL_EXPORT_DIR")
+        if local_dir:
+            try:
+                os.makedirs(local_dir, exist_ok=True)
+            except Exception as e:
+                print(f"Error creating LOCAL_EXPORT_DIR: {e}")
+            local_path = os.path.join(local_dir, download_name)
+            saved_locally = True
+        else:
+            # Fallback to current project root directory
+            local_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), download_name)
+            saved_locally = False
+            
+        try:
+            with open(local_path, "wb") as f:
+                f.write(pdf_bytes)
+        except Exception as e:
+            return jsonify({"error": f"Nu s-a putut salva PDF-ul local pentru a fi atașat: {str(e)}"}), 500
+                
+        # Send Email via Outlook AppleScript
+        subject = f"Timesheet & Invoice - {company_name} - {selected_month}"
+        body = f"Hello,\n\nPlease find attached the timesheet and invoice for the month of {selected_month}.\n\nBest regards,\n{os.getenv('CONSULTANT_NAME', 'Consultant')}"
+        
+        send_via_local_outlook(
+            recipient_emails=recipient_emails,
+            subject=subject,
+            body=body,
+            file_path=local_path
+        )
+        
+        success_msg = f"Email trimis cu succes prin Outlook local către: <strong>{recipient_emails}</strong>."
+        if saved_locally:
+            success_msg += f"<br>O copie a fost salvată și în folderul OneDrive: <strong>{local_path}</strong>"
+        else:
+            success_msg += f"<br>O copie temporară a fost salvată în: <strong>{local_path}</strong>"
+            
+        return jsonify({"message": success_msg})
+    except Exception as e:
+        return jsonify({"error": f"Eroare la trimiterea email-ului prin Outlook: {str(e)}"}), 500
+
+
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
+
+
