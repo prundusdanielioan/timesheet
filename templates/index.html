@@ -18,9 +18,11 @@
                     <span class="current-month-label">{{ current_month }}</span>
                     <a href="/?month={{ next_month }}" class="btn btn-sm btn-secondary">▶</a>
                 </div>
-                <a href="/export?month={{ selected_month }}" class="btn btn-secondary">Export Month</a>
+                <a href="#" id="export-month-btn" data-month="{{ selected_month }}" class="btn btn-secondary">Export Month</a>
             </div>
         </header>
+
+        <div id="dynamic-alerts"></div>
 
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
@@ -54,36 +56,85 @@
         </div>
 
         <div class="main-content">
-            <!-- Left Panel: Log New Day -->
-            <div class="panel glass-panel">
-                <h2>Log Today's Work</h2>
-                <form action="/log" method="POST" class="log-form">
-                    <div class="form-group">
-                        <label for="date">Date</label>
-                        <input type="date" id="date" name="date" value="{{ today }}" required>
-                    </div>
+            <!-- Left Column: Log New Day & PDF Merger -->
+            <div class="left-column" style="display: flex; flex-direction: column; gap: 2rem;">
+                <!-- Left Panel: Log New Day -->
+                <div class="panel glass-panel">
+                    <h2>Log Today's Work</h2>
+                    <form action="/log" method="POST" class="log-form">
+                        <div class="form-group">
+                            <label for="date">Date</label>
+                            <input type="date" id="date" name="date" value="{{ today }}" required>
+                        </div>
+                        
+                        <div class="form-row">
+                            <div class="form-group flex-1">
+                                <label for="hours">Hours</label>
+                                <input type="number" id="hours" name="hours" step="0.5" value="8.0" required>
+                            </div>
+                            <div class="form-group flex-1">
+                                <label for="payment">Payment (EUR)</label>
+                                <input type="number" id="payment" name="payment" value="{{ (hourly_rate * 8)|round(2) }}" required>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <div class="label-with-action">
+                                <label for="tasks_summary">Tasks / Epics Worked On</label>
+                                <button type="button" id="auto-fetch-btn" class="btn btn-sm btn-accent">✨ Auto-Fetch from Azure DevOps</button>
+                            </div>
+                            <textarea id="tasks_summary" name="tasks_summary" rows="4" placeholder="Click 'Auto-Fetch' to grab your active Azure Devops tasks, or type manually..."></textarea>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary w-100">Save Timesheet Log</button>
+                    </form>
+                </div>
+
+                <!-- PDF Merger Panel -->
+                <div class="panel glass-panel pdf-merger-panel">
+                    <h2>Glue PDFs Together</h2>
+                    <p class="panel-subtitle" style="color: var(--text-secondary); font-size: 0.9rem; margin-top: -1rem; margin-bottom: 1.5rem;">
+                        Combine multiple documents, receipts, or other files into a single PDF.
+                    </p>
                     
-                    <div class="form-row">
-                        <div class="form-group flex-1">
-                            <label for="hours">Hours</label>
-                            <input type="number" id="hours" name="hours" step="0.5" value="8.0" required>
+                    <form id="pdf-merge-form" class="log-form" enctype="multipart/form-data">
+                        <input type="hidden" name="selected_month" value="{{ selected_month }}">
+                        
+                        <div class="form-group">
+                            <div class="drag-drop-zone" id="drop-zone">
+                                <span class="upload-icon">📄</span>
+                                <p>Drag & drop PDFs here or <span class="browse-link" style="color: var(--accent-color); text-decoration: underline; cursor: pointer;">browse</span></p>
+                                <input type="file" id="pdf-input" name="pdf_files" accept="application/pdf" multiple style="display: none;">
+                            </div>
                         </div>
-                        <div class="form-group flex-1">
-                            <label for="payment">Payment (EUR)</label>
-                            <input type="number" id="payment" name="payment" value="{{ (hourly_rate * 8)|round(2) }}" required>
-                        </div>
-                    </div>
 
-                    <div class="form-group">
-                        <div class="label-with-action">
-                            <label for="tasks_summary">Tasks / Epics Worked On</label>
-                            <button type="button" id="auto-fetch-btn" class="btn btn-sm btn-accent">✨ Auto-Fetch from Azure DevOps</button>
+                        <!-- Selected File List (interactive) -->
+                        <div class="form-group" id="file-list-container" style="display: none;">
+                            <label style="display: flex; justify-content: space-between;">
+                                <span>Files to Merge</span>
+                                <span id="file-count" style="font-size: 0.8rem; color: var(--accent-color);">0 files</span>
+                            </label>
+                            <div class="file-list" id="merged-file-list">
+                                <!-- Dynamically populated files -->
+                            </div>
                         </div>
-                        <textarea id="tasks_summary" name="tasks_summary" rows="4" placeholder="Click 'Auto-Fetch' to grab your active Azure Devops tasks, or type manually..."></textarea>
-                    </div>
 
-                    <button type="submit" class="btn btn-primary w-100">Save Timesheet Log</button>
-                </form>
+                        <!-- Prepend timesheet option -->
+                        <div class="form-group checkbox-group" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem;">
+                            <input type="checkbox" id="prepend_timesheet" name="prepend_timesheet" value="true" checked style="width: auto; height: auto; cursor: pointer;">
+                            <label for="prepend_timesheet" style="margin-bottom: 0; cursor: pointer; color: var(--text-primary); font-size: 0.95rem; font-weight: normal;">
+                                Prepend timesheet for <strong>{{ current_month }}</strong>
+                            </label>
+                        </div>
+
+                        <div id="merge-error" class="alert alert-error" style="display: none; padding: 0.75rem; margin-bottom: 1rem; font-size: 0.9rem;"></div>
+                        <div id="merge-success-msg" class="alert alert-success" style="display: none; padding: 0.75rem; margin-bottom: 1rem; font-size: 0.9rem;"></div>
+
+                        <button type="submit" id="merge-submit-btn" class="btn btn-primary w-100" style="margin-top: 1rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+                            <span>🔀 Merge & Download PDF</span>
+                        </button>
+                    </form>
+                </div>
             </div>
 
             <!-- Right Panel: History -->
@@ -239,6 +290,293 @@
                 btn.disabled = false;
             }, 3000);
         });
+
+        // PDF Merger client-side logic
+        const dropZone = document.getElementById('drop-zone');
+        const pdfInput = document.getElementById('pdf-input');
+        const fileListContainer = document.getElementById('file-list-container');
+        const fileList = document.getElementById('merged-file-list');
+        const fileCountSpan = document.getElementById('file-count');
+        const mergeForm = document.getElementById('pdf-merge-form');
+        const mergeSubmitBtn = document.getElementById('merge-submit-btn');
+        const mergeError = document.getElementById('merge-error');
+        const mergeSuccess = document.getElementById('merge-success-msg');
+
+        let selectedFiles = [];
+
+        // Clicking on drop zone triggers file input
+        dropZone.addEventListener('click', () => {
+            pdfInput.click();
+        });
+
+        // Click browse link inside drop zone
+        dropZone.querySelector('.browse-link').addEventListener('click', (e) => {
+            e.stopPropagation();
+            pdfInput.click();
+        });
+
+        pdfInput.addEventListener('change', (e) => {
+            addFiles(e.target.files);
+            pdfInput.value = ''; // reset so same file can be selected again
+        });
+
+        // Drag & Drop event handlers
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.classList.add('highlight');
+            }, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.classList.remove('highlight');
+            }, false);
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            const dt = e.dataTransfer;
+            addFiles(dt.files);
+        });
+
+        function addFiles(files) {
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+                    selectedFiles.push(file);
+                }
+            }
+            updateFileListUI();
+        }
+
+        function updateFileListUI() {
+            fileList.innerHTML = '';
+            
+            if (selectedFiles.length === 0) {
+                fileListContainer.style.display = 'none';
+                fileCountSpan.textContent = '0 files';
+                return;
+            }
+
+            fileListContainer.style.display = 'block';
+            fileCountSpan.textContent = `${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''}`;
+
+            selectedFiles.forEach((file, index) => {
+                const item = document.createElement('div');
+                item.className = 'file-item';
+                item.innerHTML = `
+                    <div class="file-item-info">
+                        <span class="file-icon">📄</span>
+                        <span class="file-name" title="${file.name}">${file.name}</span>
+                        <span class="file-size">(${formatBytes(file.size)})</span>
+                    </div>
+                    <div class="file-item-actions">
+                        <button type="button" class="btn-icon" onclick="moveFile(${index}, -1)" ${index === 0 ? 'disabled' : ''} title="Move Up">▲</button>
+                        <button type="button" class="btn-icon" onclick="moveFile(${index}, 1)" ${index === selectedFiles.length - 1 ? 'disabled' : ''} title="Move Down">▼</button>
+                        <button type="button" class="btn-icon remove-btn" onclick="removeFile(${index})" title="Remove">×</button>
+                    </div>
+                `;
+                fileList.appendChild(item);
+            });
+        }
+
+        window.moveFile = function(index, direction) {
+            const targetIndex = index + direction;
+            if (targetIndex < 0 || targetIndex >= selectedFiles.length) return;
+            
+            // Swap files in array
+            const temp = selectedFiles[index];
+            selectedFiles[index] = selectedFiles[targetIndex];
+            selectedFiles[targetIndex] = temp;
+            
+            updateFileListUI();
+        };
+
+        window.removeFile = function(index) {
+            selectedFiles.splice(index, 1);
+            updateFileListUI();
+        };
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        // Handle merge form submission
+        mergeForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            mergeError.style.display = 'none';
+            mergeSuccess.style.display = 'none';
+            
+            const prependTimesheet = document.getElementById('prepend_timesheet').checked;
+            
+            if (!prependTimesheet && selectedFiles.length === 0) {
+                showMergeError("Please add at least one PDF file or enable 'Prepend timesheet'.");
+                return;
+            }
+            if (!prependTimesheet && selectedFiles.length < 2) {
+                showMergeError("Please add at least 2 PDF files to merge (or enable 'Prepend timesheet' with 1 file).");
+                return;
+            }
+            
+            // Set loading state
+            const originalBtnHtml = mergeSubmitBtn.innerHTML;
+            mergeSubmitBtn.disabled = true;
+            mergeSubmitBtn.innerHTML = '⏳ Merging PDFs... Please wait...';
+            
+            const formData = new FormData();
+            formData.append('prepend_timesheet', prependTimesheet);
+            formData.append('selected_month', mergeForm.querySelector('input[name="selected_month"]').value);
+            
+            selectedFiles.forEach(file => {
+                formData.append('pdf_files', file);
+            });
+            
+            try {
+                const response = await fetch('/merge-pdfs', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    
+                    // Retrieve filename from header
+                    const contentDisposition = response.headers.get('Content-Disposition');
+                    let filename = 'Merged_Timesheet_Documents.pdf';
+                    if (contentDisposition) {
+                        const matches = /filename="?([^"]+)"?/.exec(contentDisposition);
+                        if (matches && matches[1]) {
+                            filename = matches[1];
+                        }
+                    }
+                    
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(url);
+                    
+                    const localSavedPath = response.headers.get('X-Local-Saved-Path');
+                    if (localSavedPath) {
+                        showGlobalAlert(`PDFs successfully merged and saved to OneDrive folder: <strong>${localSavedPath}</strong>`, 'success');
+                    } else {
+                        showMergeSuccess("PDFs successfully merged and downloaded!");
+                    }
+                } else {
+                    const errorData = await response.json();
+                    showMergeError(errorData.error || "An error occurred while merging PDFs.");
+                }
+            } catch (err) {
+                showMergeError("Network error. Failed to reach the server.");
+            } finally {
+                mergeSubmitBtn.disabled = false;
+                mergeSubmitBtn.innerHTML = originalBtnHtml;
+            }
+        });
+
+        // Handle export month button click
+        document.getElementById('export-month-btn')?.addEventListener('click', async (e) => {
+            e.preventDefault();
+            const btn = e.currentTarget;
+            const month = btn.getAttribute('data-month');
+            const originalHtml = btn.innerHTML;
+            
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Exporting...';
+            
+            try {
+                const response = await fetch(`/export?month=${month}`);
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    
+                    // Get filename
+                    const contentDisposition = response.headers.get('Content-Disposition');
+                    let filename = `Timesheet_${month}.pdf`;
+                    if (contentDisposition) {
+                        const matches = /filename="?([^"]+)"?/.exec(contentDisposition);
+                        if (matches && matches[1]) {
+                            filename = matches[1];
+                        }
+                    }
+                    
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(url);
+                    
+                    // Check if it was saved locally from response header
+                    const localSavedPath = response.headers.get('X-Local-Saved-Path');
+                    if (localSavedPath) {
+                        showGlobalAlert(`Timesheet successfully exported and saved to OneDrive folder: <strong>${localSavedPath}</strong>`, 'success');
+                    } else {
+                        showGlobalAlert('Timesheet exported and downloaded successfully!', 'success');
+                    }
+                } else {
+                    const errorText = await response.text();
+                    showGlobalAlert(`Failed to export timesheet: ${errorText}`, 'error');
+                }
+            } catch (err) {
+                showGlobalAlert('Network error. Failed to reach the server.', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        });
+
+        function showMergeError(msg) {
+            mergeError.textContent = msg;
+            mergeError.style.display = 'block';
+            mergeError.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        function showMergeSuccess(msg) {
+            mergeSuccess.textContent = msg;
+            mergeSuccess.style.display = 'block';
+            setTimeout(() => {
+                mergeSuccess.style.display = 'none';
+            }, 5000);
+        }
+
+        function showGlobalAlert(msg, type = 'success') {
+            const container = document.getElementById('dynamic-alerts');
+            if (!container) return;
+            
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type}`;
+            alertDiv.style.animation = 'fadeIn 0.3s ease';
+            alertDiv.innerHTML = msg;
+            
+            // Clear existing dynamic alerts
+            container.innerHTML = '';
+            container.appendChild(alertDiv);
+            
+            // Scroll to the top to see the alert
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            
+            // Auto-hide success messages after 10 seconds
+            if (type === 'success') {
+                setTimeout(() => {
+                    alertDiv.style.opacity = '0';
+                    alertDiv.style.transition = 'opacity 0.5s ease';
+                    setTimeout(() => alertDiv.remove(), 500);
+                }, 10000);
+            }
+        }
     </script>
 </body>
 </html>

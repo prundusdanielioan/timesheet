@@ -174,13 +174,10 @@ def log_day():
         
     return redirect('/')
 
-@app.route('/export')
-def export_pdf():
+def generate_timesheet_pdf_data(selected_month):
     consultant_name = os.getenv("CONSULTANT_NAME", "Consultant")
     company_name = os.getenv("COMPANY_NAME", "Company")
     
-    # Support month selection via query param
-    selected_month = request.args.get('month', datetime.now().strftime('%Y-%m'))
     try:
         sel_year, sel_mon = int(selected_month[:4]), int(selected_month[5:7])
     except (ValueError, IndexError):
@@ -281,13 +278,93 @@ def export_pdf():
         row.cell(str(total_hours), style=total_style, align="CENTER")
         row.cell(f"{total_payment:.2f}", style=total_style, align="CENTER")
         row.cell("", style=total_style)
-    
-    # Output PDF
-    from flask import send_file
-    buffer = io.BytesIO(bytes(pdf.output()))
-    buffer.seek(0)
+        
     filename = f"Timesheet {company_name} {month_label}.pdf"
-    return send_file(buffer, mimetype='application/pdf', as_attachment=True, download_name=filename)
+    return bytes(pdf.output()), filename
+
+@app.route('/export')
+def export_pdf():
+    selected_month = request.args.get('month', datetime.now().strftime('%Y-%m'))
+    try:
+        pdf_bytes, filename = generate_timesheet_pdf_data(selected_month)
+        
+        local_dir = os.getenv("LOCAL_EXPORT_DIR")
+        saved_path = None
+        if local_dir:
+            try:
+                os.makedirs(local_dir, exist_ok=True)
+                local_path = os.path.join(local_dir, filename)
+                with open(local_path, "wb") as f:
+                    f.write(pdf_bytes)
+                saved_path = local_path
+            except Exception as e:
+                print(f"Error saving PDF locally: {e}")
+                
+        response = make_response(send_file(io.BytesIO(pdf_bytes), mimetype='application/pdf', as_attachment=True, download_name=filename))
+        if saved_path:
+            response.headers['X-Local-Saved-Path'] = saved_path
+            response.headers['Access-Control-Expose-Headers'] = 'X-Local-Saved-Path, Content-Disposition'
+        return response
+    except Exception as e:
+        return make_response(f"Error generating PDF: {str(e)}", 500)
+
+@app.route('/merge-pdfs', methods=['POST'])
+def merge_pdfs():
+    from pypdf import PdfMerger
+    
+    prepend_timesheet = request.form.get('prepend_timesheet') == 'true'
+    selected_month = request.form.get('selected_month', datetime.now().strftime('%Y-%m'))
+    
+    uploaded_files = request.files.getlist('pdf_files')
+    
+    merger = PdfMerger()
+    
+    try:
+        # 1. Prepend current month timesheet if requested
+        if prepend_timesheet:
+            pdf_bytes, filename = generate_timesheet_pdf_data(selected_month)
+            merger.append(io.BytesIO(pdf_bytes))
+            
+        # 2. Append the rest of the uploaded files
+        has_files = False
+        for file in uploaded_files:
+            if file and file.filename.endswith('.pdf'):
+                merger.append(io.BytesIO(file.read()))
+                has_files = True
+                
+        if not prepend_timesheet and not has_files:
+            return jsonify({"error": "No PDFs uploaded or selected to merge."}), 400
+            
+        output = io.BytesIO()
+        merger.write(output)
+        merger.close()
+        output.seek(0)
+        
+        company_name = os.getenv("COMPANY_NAME", "Company")
+        download_name = f"Merged_Timesheet_{company_name}_{selected_month}.pdf" if prepend_timesheet else "Merged_Documents.pdf"
+        
+        pdf_bytes = output.getvalue()
+        
+        local_dir = os.getenv("LOCAL_EXPORT_DIR")
+        saved_path = None
+        if local_dir:
+            try:
+                os.makedirs(local_dir, exist_ok=True)
+                local_path = os.path.join(local_dir, download_name)
+                with open(local_path, "wb") as f:
+                    f.write(pdf_bytes)
+                saved_path = local_path
+            except Exception as e:
+                print(f"Error saving merged PDF locally: {e}")
+                
+        response = make_response(send_file(io.BytesIO(pdf_bytes), mimetype='application/pdf', as_attachment=True, download_name=download_name))
+        if saved_path:
+            response.headers['X-Local-Saved-Path'] = saved_path
+            response.headers['Access-Control-Expose-Headers'] = 'X-Local-Saved-Path, Content-Disposition'
+        return response
+    except Exception as e:
+        return jsonify({"error": f"Failed to merge PDFs: {str(e)}"}), 500
+
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
